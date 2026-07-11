@@ -1,0 +1,4 @@
+(library
+ (name MonkeyInterpreter)
+ (inline_tests)
+ (preprocess (pps ppx_jane)))
