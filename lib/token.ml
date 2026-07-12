@@ -8,6 +8,14 @@ type t =
   (* Operators *)
   | Assign
   | Plus
+  | Minus
+  | Bang
+  | Asterisk
+  | Slash
+  | LT
+  | GT
+  | Eq
+  | NEq
   (* Delimiters *)
   | Comma
   | Semicolon
@@ -18,4 +26,9 @@ type t =
   (* Keywords *)
   | Function
   | Let
+  | True
+  | False
+  | If
+  | Else
+  | Return
 [@@deriving compare, sexp]

@@ -14,6 +14,11 @@ let read_identifier_or_keyword inp =
     match identifier with
     | "let" -> Token.Let
     | "fn" -> Token.Function
+    | "true" -> True
+    | "false" -> False
+    | "if" -> If
+    | "else" -> Else
+    | "return" -> Return
     | _ -> Token.Ident identifier
   in
   (rest, identifier_or_keyword)
@@ -32,17 +37,28 @@ let lex inp =
             if is_letter hd then read_identifier_or_keyword l
             else if Char.is_digit hd then read_number l
             else
-              ( tl,
-                match hd with
-                | '=' -> Token.Assign
-                | ';' -> Semicolon
-                | '(' -> LParen
-                | ')' -> RParen
-                | ',' -> Comma
-                | '+' -> Plus
-                | '{' -> LBrace
-                | '}' -> RBrace
-                | _ -> Illegal )
+              match hd with
+              | '=' -> (
+                  match tl with
+                  | '=' :: tl' -> (tl', Token.Eq)
+                  | _ -> (tl, Token.Assign))
+              | '!' -> (
+                  match tl with
+                  | '=' :: tl' -> (tl', Token.NEq)
+                  | _ -> (tl, Token.Bang))
+              | ';' -> (tl, Semicolon)
+              | '(' -> (tl, LParen)
+              | ')' -> (tl, RParen)
+              | ',' -> (tl, Comma)
+              | '+' -> (tl, Plus)
+              | '-' -> (tl, Minus)
+              | '*' -> (tl, Asterisk)
+              | '/' -> (tl, Slash)
+              | '<' -> (tl, LT)
+              | '>' -> (tl, GT)
+              | '{' -> (tl, LBrace)
+              | '}' -> (tl, RBrace)
+              | _ -> (tl, Illegal)
           in
           helper (tok :: tokens) rest
   in
@@ -57,6 +73,17 @@ let%test_unit "lexer" =
         x + y;
     };
     let result = add(five, ten);
+    !-/*5;
+    5 < 10 > 5;
+
+    if (5 < 10) {
+        return true;
+    } else {
+        return false;
+    }
+
+    10 == 10;
+    10 != 9;
   |}
   in
   let tokens = lex inp in
@@ -97,5 +124,42 @@ let%test_unit "lexer" =
       Comma;
       Ident "ten";
       RParen;
+      Semicolon;
+      Bang;
+      Minus;
+      Slash;
+      Asterisk;
+      Int 5;
+      Semicolon;
+      Int 5;
+      LT;
+      Int 10;
+      GT;
+      Int 5;
+      Semicolon;
+      If;
+      LParen;
+      Int 5;
+      LT;
+      Int 10;
+      RParen;
+      LBrace;
+      Return;
+      True;
+      Semicolon;
+      RBrace;
+      Else;
+      LBrace;
+      Return;
+      False;
+      Semicolon;
+      RBrace;
+      Int 10;
+      Eq;
+      Int 10;
+      Semicolon;
+      Int 10;
+      NEq;
+      Int 9;
       Semicolon;
     ]
