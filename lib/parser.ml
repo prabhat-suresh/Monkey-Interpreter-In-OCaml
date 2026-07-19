@@ -21,6 +21,14 @@ let parse_statement = function
   | Token.Let :: tokens ->
       Or_error.map (parse_let_statement tokens) ~f:(fun (let_stmt, tl) ->
           (Ast.Let let_stmt, tl))
+  | Token.Return :: tokens -> (
+      let open Or_error.Let_syntax in
+      let%bind value, tl = parse_expression tokens in
+      match tl with
+      | Token.Semicolon :: tl' -> Ok (Ast.Return value, tl')
+      | _ ->
+          Or_error.error_string
+            "Parsing Error: Semicolon missing in Let Statement")
   | _ -> Or_error.error_string "Parsing Error: not a Statement"
 
 let parse tokens =
@@ -37,9 +45,9 @@ let parse tokens =
 let%test_unit "test_let_statements" =
   let inp =
     {|
-        let x = 5;
-        let y = 10;
-        let foobar = 838383;
+      let x = 5;
+      let y = 10;
+      let foobar = 838383;
     |}
   in
   let program = parse (Lexer.lex inp) in
@@ -49,4 +57,19 @@ let%test_unit "test_let_statements" =
          Ast.Let { name = "x"; value = Integer 5 };
          Ast.Let { name = "y"; value = Integer 10 };
          Ast.Let { name = "foobar"; value = Integer 838383 };
+       ]
+
+let%test_unit "test_return_statements" =
+  let inp = {|
+      return 5;
+      return 10;
+      return 993322;
+    |} in
+  let program = parse (Lexer.lex inp) in
+  [%test_eq: Ast.program Or_error.t] program
+  @@ Ok
+       [
+         Ast.Return (Ast.Integer 5);
+         Ast.Return (Ast.Integer 10);
+         Ast.Return (Ast.Integer 993322);
        ]
