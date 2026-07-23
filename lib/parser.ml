@@ -29,6 +29,8 @@ and parse_expression ~left_expr ~precedence tokens =
       | Token.Int n :: tl -> infix_helper ~expr:(Ast.Integer n) ~precedence tl
       | Token.Ident var :: tl ->
           infix_helper ~expr:(Ast.Ident var) ~precedence tl
+      | Token.True :: tl -> infix_helper ~expr:(Boolean true) ~precedence tl
+      | Token.False :: tl -> infix_helper ~expr:(Boolean false) ~precedence tl
       | ((Token.Bang | Token.Minus) as tok) :: tokens ->
           let%bind expr, tl =
             parse_expression ~left_expr:None ~precedence:Precedence.Prefix
@@ -402,3 +404,8 @@ let%test_unit "parse infix operator precedence" =
                       };
                 });
          ])
+
+let%test_unit "parse boolean literal expressions" =
+  let inp = "true;false;" in
+  [%test_result: Ast.program Or_error.t] (parse_str inp)
+    ~expect:(Ok [ Ast.Expr (Boolean true); Ast.Expr (Boolean false) ])

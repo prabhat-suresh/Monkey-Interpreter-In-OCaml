@@ -4,6 +4,7 @@ type identifier = string [@@deriving compare, sexp]
 
 type expression =
   | Integer of int
+  | Boolean of bool
   | Ident of string
   | Prefix of { operator : Token.t; expr : expression }
   | Infix of {
