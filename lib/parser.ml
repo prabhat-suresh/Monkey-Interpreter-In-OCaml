@@ -31,14 +31,21 @@ and parse_expression ~left_expr ~precedence tokens =
           infix_helper ~expr:(Ast.Ident var) ~precedence tl
       | Token.True :: tl -> infix_helper ~expr:(Boolean true) ~precedence tl
       | Token.False :: tl -> infix_helper ~expr:(Boolean false) ~precedence tl
-      | ((Token.Bang | Token.Minus) as tok) :: tokens ->
-          let%bind expr, tl =
-            parse_expression ~left_expr:None ~precedence:Precedence.Prefix
-              tokens
+      | ((Token.Bang | Token.Minus) as tok) :: tl ->
+          let%bind expr, tl' =
+            parse_expression ~left_expr:None ~precedence:Precedence.Prefix tl
           in
           infix_helper
             ~expr:(Ast.Prefix { operator = tok; expr })
-            ~precedence tl
+            ~precedence tl'
+      | Token.LParen :: tl -> (
+          let%bind expr, tl' =
+            parse_expression ~left_expr:None ~precedence:Precedence.Lowest tl
+          in
+          match tl' with
+          | Token.RParen :: tl'' -> infix_helper ~expr ~precedence tl''
+          | _ ->
+              Or_error.error_string "Parsing Error: Missing required semicolon")
       | _ -> Or_error.error_string "Parsing Error: Invalid Expression")
   | Some left_expr -> (
       match tokens with
@@ -409,3 +416,146 @@ let%test_unit "parse boolean literal expressions" =
   let inp = "true;false;" in
   [%test_result: Ast.program Or_error.t] (parse_str inp)
     ~expect:(Ok [ Ast.Expr (Boolean true); Ast.Expr (Boolean false) ])
+
+let%test_unit "parse infix operator precedence with parenthesized expressions" =
+  let inp = {|
+      -( a*b );
+      !( -a );
+      a+( b-c );
+      a*( b/c );
+      ( a+b )/c;
+      ( a + b ) * ( c + d ) / ( e - f );
+      ( 3 + 4 ) * ( ( 5 == 3 ) * ( 1 + 4 ) * 5 );
+    |} in
+  [%test_result: Ast.program Or_error.t] (parse_str inp)
+    ~expect:
+      (Ok
+         [
+           Ast.Expr
+             (Prefix
+                {
+                  operator = Token.Minus;
+                  expr =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "a";
+                        operator = Token.Asterisk;
+                        right_expr = Ast.Ident "b";
+                      };
+                });
+           Ast.Expr
+             (Prefix
+                {
+                  operator = Token.Bang;
+                  expr =
+                    Prefix
+                      { operator = Token.Minus; expr = Ast.Ident "a" };
+                });
+           Ast.Expr
+             (Infix
+                {
+                  left_expr = Ast.Ident "a";
+                  operator = Token.Plus;
+                  right_expr =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "b";
+                        operator = Token.Minus;
+                        right_expr = Ast.Ident "c";
+                      };
+                });
+           Ast.Expr
+             (Infix
+                {
+                  left_expr = Ast.Ident "a";
+                  operator = Token.Asterisk;
+                  right_expr =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "b";
+                        operator = Token.Slash;
+                        right_expr = Ast.Ident "c";
+                      };
+                });
+           Ast.Expr
+             (Infix
+                {
+                  left_expr =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "a";
+                        operator = Token.Plus;
+                        right_expr = Ast.Ident "b";
+                      };
+                  operator = Token.Slash;
+                  right_expr = Ast.Ident "c";
+                });
+           Ast.Expr
+             (Infix
+                {
+                  left_expr =
+                    Infix
+                      {
+                        left_expr =
+                          Infix
+                            {
+                              left_expr = Ast.Ident "a";
+                              operator = Token.Plus;
+                              right_expr = Ast.Ident "b";
+                            };
+                        operator = Token.Asterisk;
+                        right_expr =
+                          Infix
+                            {
+                              left_expr = Ast.Ident "c";
+                              operator = Token.Plus;
+                              right_expr = Ast.Ident "d";
+                            };
+                      };
+                  operator = Token.Slash;
+                  right_expr =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "e";
+                        operator = Token.Minus;
+                        right_expr = Ast.Ident "f";
+                      };
+                });
+           Ast.Expr
+             (Infix
+                {
+                  left_expr =
+                    Infix
+                      {
+                        left_expr = Ast.Integer 3;
+                        operator = Token.Plus;
+                        right_expr = Ast.Integer 4;
+                      };
+                  operator = Token.Asterisk;
+                  right_expr =
+                    Infix
+                      {
+                        left_expr =
+                          Infix
+                            {
+                              left_expr =
+                                Infix
+                                  {
+                                    left_expr = Ast.Integer 5;
+                                    operator = Token.Eq;
+                                    right_expr = Ast.Integer 3;
+                                  };
+                              operator = Token.Asterisk;
+                              right_expr =
+                                Infix
+                                  {
+                                    left_expr = Ast.Integer 1;
+                                    operator = Token.Plus;
+                                    right_expr = Ast.Integer 4;
+                                  };
+                            };
+                        operator = Token.Asterisk;
+                        right_expr = Ast.Integer 5;
+                      };
+                });
+         ])
