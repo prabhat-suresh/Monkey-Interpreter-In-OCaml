@@ -32,3 +32,7 @@ type t =
   | Else
   | Return
 [@@deriving compare, sexp]
+
+let is_infix_operator = function
+  | Plus | Minus | Asterisk | Slash | GT | LT | Eq | NEq -> true
+  | _ -> false
