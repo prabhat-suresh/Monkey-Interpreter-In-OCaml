@@ -12,15 +12,22 @@ type expression =
       operator : Token.t;
       right_expr : expression;
     }
+  | IfElseExpression of {
+      condition : expression;
+      consequence : block_statement;
+      alternative : block_statement;
+    }
 [@@deriving compare, sexp]
 
-type letStatement = { name : identifier; value : expression }
+and letStatement = { name : identifier; value : expression }
 [@@deriving compare, sexp]
 
-type statement =
+and statement =
   | Let of letStatement
   | Return of expression
   | Expr of expression
 [@@deriving compare, sexp]
+
+and block_statement = statement list [@@deriving compare, sexp]
 
 type program = statement list [@@deriving compare, sexp]

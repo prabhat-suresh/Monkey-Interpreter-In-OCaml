@@ -13,9 +13,12 @@ module Precedence = struct
     | _ -> failwith "Not an infix operator"
 end
 
-let expect_semicolon = function
-  | Token.Semicolon :: tl -> Ok tl
-  | _ -> Or_error.error_string "Parsing Error: Missing required semicolon"
+let expect token = function
+  | tok :: tl when Token.compare tok token = 0 -> Ok tl
+  | _ ->
+      Or_error.error_string
+      @@ Printf.sprintf "Parsing Error: Missing required token: %s"
+      @@ Sexp.to_string_hum @@ Token.sexp_of_t token
 
 let rec infix_helper ~expr ~precedence = function
   | tok :: _ as tokens when Token.is_infix_operator tok ->
@@ -46,6 +49,23 @@ and parse_expression ~left_expr ~precedence tokens =
           | Token.RParen :: tl'' -> infix_helper ~expr ~precedence tl''
           | _ ->
               Or_error.error_string "Parsing Error: Missing required semicolon")
+      | Token.If :: tl -> (
+          let%bind tl' = expect LParen tl in
+          let%bind condition, tl'' =
+            parse_expression ~left_expr:None ~precedence:Lowest tl'
+          in
+          let%bind tl''' = expect RParen tl'' in
+          let%bind consequence, tl'''' = parse_block_statement tl''' in
+          match tl'''' with
+          | Token.Else :: tl''''' ->
+              let%bind alternative, tl'''''' = parse_block_statement tl''''' in
+              Ok
+                ( Ast.IfElseExpression { condition; consequence; alternative },
+                  tl'''''' )
+          | _ ->
+              Ok
+                ( IfElseExpression { condition; consequence; alternative = [] },
+                  tl'''' ))
       | _ -> Or_error.error_string "Parsing Error: Invalid Expression")
   | Some left_expr -> (
       match tokens with
@@ -61,18 +81,18 @@ and parse_expression ~left_expr ~precedence tokens =
           else Ok (left_expr, tokens)
       | _ -> Or_error.error_string "Parsing Error: Invalid Expression")
 
-let parse_let_statement = function
+and parse_let_statement = function
   | Token.Ident var :: Token.Assign :: tokens ->
       let%bind value, tl =
         parse_expression ~left_expr:None ~precedence:Precedence.Lowest tokens
       in
-      let%map tl' = expect_semicolon tl in
+      let%map tl' = expect Semicolon tl in
       ({ Ast.name = var; value }, tl')
   | _ ->
       Or_error.error_string
         "Parsing Error: Malformed let statement (expected 'ident = ...')"
 
-let parse_statement = function
+and parse_statement = function
   | Token.Let :: tokens ->
       let%map let_stmt, tl = parse_let_statement tokens in
       (Ast.Let let_stmt, tl)
@@ -80,7 +100,7 @@ let parse_statement = function
       let%bind value, tl =
         parse_expression ~left_expr:None ~precedence:Precedence.Lowest tokens
       in
-      let%map tl' = expect_semicolon tl in
+      let%map tl' = expect Semicolon tl in
       (Ast.Return value, tl')
   | tokens ->
       let%map value, tl =
@@ -89,6 +109,18 @@ let parse_statement = function
       (* Optional semicolon for expression statements *)
       let tl' = match tl with Token.Semicolon :: tl' -> tl' | _ -> tl in
       (Ast.Expr value, tl')
+
+and parse_block_statement = function
+  | Token.LBrace :: tokens ->
+      let rec helper block = function
+        | Token.RBrace :: tl' -> Ok (List.rev block, tl')
+        | _ ->
+            let%bind stmt, tl = parse_statement tokens in
+            helper (stmt :: block) tl
+      in
+      helper [] tokens
+  | _ ->
+      Or_error.error_string "Expected LBrace in If statement, but it's missing"
 
 let parse tokens =
   let rec helper acc = function
@@ -418,7 +450,8 @@ let%test_unit "parse boolean literal expressions" =
     ~expect:(Ok [ Ast.Expr (Boolean true); Ast.Expr (Boolean false) ])
 
 let%test_unit "parse infix operator precedence with parenthesized expressions" =
-  let inp = {|
+  let inp =
+    {|
       -( a*b );
       !( -a );
       a+( b-c );
@@ -426,7 +459,8 @@ let%test_unit "parse infix operator precedence with parenthesized expressions" =
       ( a+b )/c;
       ( a + b ) * ( c + d ) / ( e - f );
       ( 3 + 4 ) * ( ( 5 == 3 ) * ( 1 + 4 ) * 5 );
-    |} in
+    |}
+  in
   [%test_result: Ast.program Or_error.t] (parse_str inp)
     ~expect:
       (Ok
@@ -447,9 +481,7 @@ let%test_unit "parse infix operator precedence with parenthesized expressions" =
              (Prefix
                 {
                   operator = Token.Bang;
-                  expr =
-                    Prefix
-                      { operator = Token.Minus; expr = Ast.Ident "a" };
+                  expr = Prefix { operator = Token.Minus; expr = Ast.Ident "a" };
                 });
            Ast.Expr
              (Infix
@@ -557,5 +589,44 @@ let%test_unit "parse infix operator precedence with parenthesized expressions" =
                         operator = Token.Asterisk;
                         right_expr = Ast.Integer 5;
                       };
+                });
+         ])
+
+let%test_unit "parse if else expressions" =
+  let inp =
+    {|
+      if (x < y) { x }
+      if (x < y) { x } else { y }
+    |}
+  in
+  [%test_result: Ast.program Or_error.t] (parse_str inp)
+    ~expect:
+      (Ok
+         [
+           Ast.Expr
+             (IfElseExpression
+                {
+                  condition =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "x";
+                        operator = Token.LT;
+                        right_expr = Ast.Ident "y";
+                      };
+                  consequence = [ Ast.Expr (Ident "x") ];
+                  alternative = [];
+                });
+           Ast.Expr
+             (IfElseExpression
+                {
+                  condition =
+                    Infix
+                      {
+                        left_expr = Ast.Ident "x";
+                        operator = Token.LT;
+                        right_expr = Ast.Ident "y";
+                      };
+                  consequence = [ Ast.Expr (Ident "x") ];
+                  alternative = [ Ast.Expr (Ident "y") ];
                 });
          ])
