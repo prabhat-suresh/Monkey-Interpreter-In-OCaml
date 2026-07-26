@@ -34,5 +34,5 @@ type t =
 [@@deriving compare, sexp]
 
 let is_infix_operator = function
-  | Plus | Minus | Asterisk | Slash | GT | LT | Eq | NEq -> true
+  | Plus | Minus | Asterisk | Slash | GT | LT | Eq | NEq | LParen -> true
   | _ -> false

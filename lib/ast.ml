@@ -17,6 +17,8 @@ type expression =
       consequence : block_statement;
       alternative : block_statement;
     }
+  | Fn of { parameters : identifier list; body : block_statement }
+  | FnCall of { func : expression; arguments : expression list }
 [@@deriving compare, sexp]
 
 and letStatement = { name : identifier; value : expression }

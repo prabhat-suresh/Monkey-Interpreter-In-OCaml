@@ -20,6 +20,10 @@ let expect token = function
       @@ Printf.sprintf "Parsing Error: Missing required token: %s"
       @@ Sexp.to_string_hum @@ Token.sexp_of_t token
 
+let maybe_consume token = function
+  | tok :: tl when Token.compare tok token = 0 -> tl
+  | tokens -> tokens
+
 let rec infix_helper ~expr ~precedence = function
   | tok :: _ as tokens when Token.is_infix_operator tok ->
       parse_expression ~left_expr:(Some expr) ~precedence tokens
@@ -41,34 +45,24 @@ and parse_expression ~left_expr ~precedence tokens =
           infix_helper
             ~expr:(Ast.Prefix { operator = tok; expr })
             ~precedence tl'
-      | Token.LParen :: tl -> (
+      | Token.LParen :: tl ->
           let%bind expr, tl' =
             parse_expression ~left_expr:None ~precedence:Precedence.Lowest tl
           in
-          match tl' with
-          | Token.RParen :: tl'' -> infix_helper ~expr ~precedence tl''
-          | _ ->
-              Or_error.error_string "Parsing Error: Missing required semicolon")
-      | Token.If :: tl -> (
-          let%bind tl' = expect LParen tl in
-          let%bind condition, tl'' =
-            parse_expression ~left_expr:None ~precedence:Lowest tl'
-          in
-          let%bind tl''' = expect RParen tl'' in
-          let%bind consequence, tl'''' = parse_block_statement tl''' in
-          match tl'''' with
-          | Token.Else :: tl''''' ->
-              let%bind alternative, tl'''''' = parse_block_statement tl''''' in
-              Ok
-                ( Ast.IfElseExpression { condition; consequence; alternative },
-                  tl'''''' )
-          | _ ->
-              Ok
-                ( IfElseExpression { condition; consequence; alternative = [] },
-                  tl'''' ))
+          let%bind tl'' = expect RParen tl' in
+          infix_helper ~expr ~precedence tl''
+      | Token.If :: tl -> parse_if_else_expression tl
+      | Token.Function :: tl ->
+          let%bind func, tl' = parse_function_literals tl in
+          infix_helper ~expr:func ~precedence tl'
       | _ -> Or_error.error_string "Parsing Error: Invalid Expression")
   | Some left_expr -> (
       match tokens with
+      | Token.LParen :: tl ->
+          let%bind arguments, tl' = parse_arguments tl in
+          infix_helper
+            ~expr:(FnCall { func = left_expr; arguments })
+            ~precedence tl'
       | tok :: tl when Token.is_infix_operator tok ->
           let op_precedence = Precedence.precedence_of_infix_operator tok in
           if Precedence.compare op_precedence precedence > 0 then
@@ -107,7 +101,7 @@ and parse_statement = function
         parse_expression ~left_expr:None ~precedence:Precedence.Lowest tokens
       in
       (* Optional semicolon for expression statements *)
-      let tl' = match tl with Token.Semicolon :: tl' -> tl' | _ -> tl in
+      let tl' = maybe_consume Semicolon tl in
       (Ast.Expr value, tl')
 
 and parse_block_statement = function
@@ -121,6 +115,50 @@ and parse_block_statement = function
       helper [] tokens
   | _ ->
       Or_error.error_string "Expected LBrace in If statement, but it's missing"
+
+and parse_if_else_expression tokens =
+  let%bind tl = expect LParen tokens in
+  let%bind condition, tl' =
+    parse_expression ~left_expr:None ~precedence:Lowest tl
+  in
+  let%bind tl'' = expect RParen tl' in
+  let%bind consequence, tl''' = parse_block_statement tl'' in
+  match tl''' with
+  | Token.Else :: tl'''' ->
+      let%map alternative, tl''''' = parse_block_statement tl'''' in
+      (Ast.IfElseExpression { condition; consequence; alternative }, tl''''')
+  | _ ->
+      Ok (IfElseExpression { condition; consequence; alternative = [] }, tl''')
+
+and parse_parameters tokens =
+  let%bind tl = expect LParen tokens in
+  let rec helper params = function
+    | Token.RParen :: tl' -> Ok (List.rev params, tl')
+    | Token.Ident param :: tl' ->
+        let tl'' = maybe_consume Comma tl' in
+        helper (param :: params) tl''
+    | _ ->
+        Or_error.error_string
+          "Parsing Error: ill-formed parameters in function definition"
+  in
+  helper [] tl
+
+and parse_function_literals tokens =
+  let%bind parameters, tl = parse_parameters tokens in
+  let%map body, tl' = parse_block_statement tl in
+  (Ast.Fn { parameters; body }, tl')
+
+and parse_arguments tokens =
+  let rec helper args = function
+    | Token.RParen :: tl' -> Ok (List.rev args, tl')
+    | tokens ->
+        let%bind expr, tl =
+          parse_expression ~left_expr:None ~precedence:Lowest tokens
+        in
+        let tl' = maybe_consume Comma tl in
+        helper (expr :: args) tl'
+  in
+  helper [] tokens
 
 let parse tokens =
   let rec helper acc = function
@@ -452,13 +490,13 @@ let%test_unit "parse boolean literal expressions" =
 let%test_unit "parse infix operator precedence with parenthesized expressions" =
   let inp =
     {|
-      -( a*b );
-      !( -a );
-      a+( b-c );
+      -( a*b )
+      !( -a )
+      a+( b-c )
       a*( b/c );
       ( a+b )/c;
       ( a + b ) * ( c + d ) / ( e - f );
-      ( 3 + 4 ) * ( ( 5 == 3 ) * ( 1 + 4 ) * 5 );
+      ( 3 + 4 ) * ( isBool( 5 == 3 ) * ( 1 + 4 ) * 5 );
     |}
   in
   [%test_result: Ast.program Or_error.t] (parse_str inp)
@@ -571,11 +609,18 @@ let%test_unit "parse infix operator precedence with parenthesized expressions" =
                           Infix
                             {
                               left_expr =
-                                Infix
+                                Ast.FnCall
                                   {
-                                    left_expr = Ast.Integer 5;
-                                    operator = Token.Eq;
-                                    right_expr = Ast.Integer 3;
+                                    func = Ast.Ident "isBool";
+                                    arguments =
+                                      [
+                                        Infix
+                                          {
+                                            left_expr = Ast.Integer 5;
+                                            operator = Token.Eq;
+                                            right_expr = Ast.Integer 3;
+                                          };
+                                      ];
                                   };
                               operator = Token.Asterisk;
                               right_expr =
@@ -628,5 +673,129 @@ let%test_unit "parse if else expressions" =
                       };
                   consequence = [ Ast.Expr (Ident "x") ];
                   alternative = [ Ast.Expr (Ident "y") ];
+                });
+         ])
+
+let%test_unit "parse function literals" =
+  let inp =
+    {|
+      fn(x, y) { x+y; }
+      fn() {42}
+      fn(x) {x*x}
+    |}
+  in
+  [%test_result: Ast.program Or_error.t] (parse_str inp)
+    ~expect:
+      (Ok
+         [
+           Ast.Expr
+             (Fn
+                {
+                  parameters = [ "x"; "y" ];
+                  body =
+                    [
+                      Ast.Expr
+                        (Infix
+                           {
+                             left_expr = Ast.Ident "x";
+                             operator = Token.Plus;
+                             right_expr = Ast.Ident "y";
+                           });
+                    ];
+                });
+           Ast.Expr (Fn { parameters = []; body = [ Ast.Expr (Integer 42) ] });
+           Ast.Expr
+             (Fn
+                {
+                  parameters = [ "x" ];
+                  body =
+                    [
+                      Ast.Expr
+                        (Infix
+                           {
+                             left_expr = Ast.Ident "x";
+                             operator = Token.Asterisk;
+                             right_expr = Ast.Ident "x";
+                           });
+                    ];
+                });
+         ])
+
+let%test_unit "parse call expression" =
+  let inp =
+    {|
+      add(1, 2 * 3, 4 + 5);
+      fn(x, y) { x + y; }(2, 3);
+      callsFunction(2, 3, fn(x, y) { x + y; });
+    |}
+  in
+  [%test_result: Ast.program Or_error.t] (parse_str inp)
+    ~expect:
+      (Ok
+         [
+           Ast.Expr
+             (FnCall
+                {
+                  func = Ast.Ident "add";
+                  arguments =
+                    [
+                      Ast.Integer 1;
+                      Infix
+                        {
+                          left_expr = Ast.Integer 2;
+                          operator = Token.Asterisk;
+                          right_expr = Ast.Integer 3;
+                        };
+                      Infix
+                        {
+                          left_expr = Ast.Integer 4;
+                          operator = Token.Plus;
+                          right_expr = Ast.Integer 5;
+                        };
+                    ];
+                });
+           Ast.Expr
+             (FnCall
+                {
+                  func =
+                    Fn
+                      {
+                        parameters = [ "x"; "y" ];
+                        body =
+                          [
+                            Ast.Expr
+                              (Infix
+                                 {
+                                   left_expr = Ast.Ident "x";
+                                   operator = Token.Plus;
+                                   right_expr = Ast.Ident "y";
+                                 });
+                          ];
+                      };
+                  arguments = [ Ast.Integer 2; Ast.Integer 3 ];
+                });
+           Ast.Expr
+             (FnCall
+                {
+                  func = Ast.Ident "callsFunction";
+                  arguments =
+                    [
+                      Ast.Integer 2;
+                      Ast.Integer 3;
+                      Fn
+                        {
+                          parameters = [ "x"; "y" ];
+                          body =
+                            [
+                              Ast.Expr
+                                (Infix
+                                   {
+                                     left_expr = Ast.Ident "x";
+                                     operator = Token.Plus;
+                                     right_expr = Ast.Ident "y";
+                                   });
+                            ];
+                        };
+                    ];
                 });
          ])

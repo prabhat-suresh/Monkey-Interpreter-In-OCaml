@@ -5,10 +5,10 @@ let start ic oc =
   Out_channel.flush oc;
   In_channel.fold_lines
     (fun () line ->
-      Lexer.lex line
-      |> List.iter ~f:(fun tok ->
-          Out_channel.output_string oc @@ Sexp.to_string @@ Token.sexp_of_t tok;
-          Out_channel.output_char oc '\n');
-      Out_channel.output_string oc ">> ";
+      Lexer.lex line |> Parser.parse
+      |> Or_error.sexp_of_t Ast.sexp_of_program
+      |> Sexp.to_string_hum
+      |> Out_channel.output_string oc;
+      Out_channel.output_string oc "\n>> ";
       Out_channel.flush oc)
     () ic
