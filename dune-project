@@ -5,22 +5,22 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github prabhat.suresh/MonkeyInterpreter))
 
-(authors "Author Name <author@example.com>")
+(authors "Prabhat Suresh")
 
-(maintainers "Maintainer Name <maintainer@example.com>")
+(maintainers "Prabhat Suresh")
 
 (license LICENSE)
 
-(documentation https://url/to/documentation)
-
 (package
  (name MonkeyInterpreter)
- (synopsis "A short synopsis")
- (description "A longer description")
- (depends ocaml)
+ (synopsis "An interpreter for the Monkey programming language")
+ (description
+  "An OCaml implementation of the Monkey programming language interpreter from Thorsten Ball's 'Writing an Interpreter in Go'.")
+ (depends
+  (ocaml
+   (>= 4.14))
+  base)
  (tags
-  ("add topics" "to describe" your project)))
-
-; See the complete stanza docs at https://dune.readthedocs.io/en/stable/reference/dune-project/index.html
+  ("interpreter" "parser" "lexer" "monkey")))

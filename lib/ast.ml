@@ -1,35 +1,47 @@
 open Base
 
-type identifier = string [@@deriving compare, sexp]
+type identifier = Ident of string [@@deriving compare, sexp]
+
+type operator = Plus | Minus | Bang | Asterisk | Slash | LT | GT | Eq | NEq
+[@@deriving compare, sexp]
+
+let operator_of_token = function
+  | Token.Plus -> Plus
+  | Token.Minus -> Minus
+  | Token.Bang -> Bang
+  | Token.Asterisk -> Asterisk
+  | Token.Slash -> Slash
+  | Token.LT -> LT
+  | Token.GT -> GT
+  | Token.Eq -> Eq
+  | Token.NEq -> NEq
+  | _ -> failwith "Not a valid operator"
 
 type expression =
   | Integer of int
   | Boolean of bool
-  | Ident of string
-  | Prefix of { operator : Token.t; expr : expression }
+  | Identifier of string
+  | Prefix of { operator : operator; expr : expression }
   | Infix of {
       left_expr : expression;
-      operator : Token.t;
+      operator : operator;
       right_expr : expression;
     }
   | IfElseExpression of {
       condition : expression;
       consequence : block_statement;
-      alternative : block_statement;
+      alternative : block_statement option;
     }
   | Fn of { parameters : identifier list; body : block_statement }
   | FnCall of { func : expression; arguments : expression list }
 [@@deriving compare, sexp]
 
-and letStatement = { name : identifier; value : expression }
-[@@deriving compare, sexp]
-
 and statement =
-  | Let of letStatement
+  | Let of { name : identifier; value : expression }
   | Return of expression
   | Expr of expression
 [@@deriving compare, sexp]
 
-and block_statement = statement list [@@deriving compare, sexp]
+and block_statement = Block of statement list [@@deriving compare, sexp]
 
-type program = statement list [@@deriving compare, sexp]
+type program = Program of statement list [@@deriving compare, sexp]
