@@ -7,10 +7,17 @@ let start ic oc =
     match In_channel.input_line ic with
     | None -> ()
     | Some line ->
-        Lexer.lex line |> Parser.parse
-        |> Or_error.sexp_of_t Ast.sexp_of_program
-        |> Sexp.to_string_hum
-        |> Out_channel.output_string oc;
+        let output =
+          match Parser.parse (Lexer.lex line) with
+          | Error e -> Error.to_string_hum e
+          | Ok obj -> (
+              match Evaluator.eval obj with
+              | Object.Integer n -> Int64.to_string_hum n
+              | True -> "True"
+              | False -> "False"
+              | Null -> "NULL")
+        in
+        Out_channel.output_string oc output;
         Out_channel.output_string oc "\n";
         loop ()
   in
