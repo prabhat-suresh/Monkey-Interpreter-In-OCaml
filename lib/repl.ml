@@ -13,8 +13,8 @@ let start ic oc =
           | Ok obj -> (
               match Evaluator.eval obj with
               | Object.Integer n -> Int64.to_string_hum n
-              | True -> "True"
-              | False -> "False"
+              | True -> "true"
+              | False -> "false"
               | Null -> "NULL")
         in
         Out_channel.output_string oc output;
