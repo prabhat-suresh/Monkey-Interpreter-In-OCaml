@@ -14,12 +14,37 @@ let eval_prefix_expression right = function
   | Ast.Minus -> eval_minus_prefix_operator_expression right
   | _ -> Null
 
+let eval_integer_infix_expression left right = function
+  | Ast.Plus -> Object.Integer Int64.(left + right)
+  | Ast.Minus -> Object.Integer Int64.(left - right)
+  | Ast.Asterisk -> Object.Integer Int64.(left * right)
+  | Ast.Slash -> Object.Integer Int64.(left / right)
+  | Ast.LT -> Object.native_bool_to_boolean_object Int64.(left < right)
+  | Ast.GT -> Object.native_bool_to_boolean_object Int64.(left > right)
+  | Ast.Eq -> Object.native_bool_to_boolean_object Int64.(left = right)
+  | Ast.NEq -> Object.native_bool_to_boolean_object Int64.(left <> right)
+  | _ -> Object.Null
+
+let eval_infix_expression = function
+  | Object.Integer left, op, Object.Integer right ->
+      eval_integer_infix_expression left right op
+  | left, Ast.Eq, right ->
+      Object.native_bool_to_boolean_object (Object.compare left right = 0)
+  | left, Ast.NEq, right ->
+      Object.native_bool_to_boolean_object (Object.compare left right <> 0)
+  | _ -> Object.Null
+
 let rec eval_expression = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
-  | Ast.Boolean b -> if b then Object.True else Object.False
+  | Ast.Boolean b -> Object.native_bool_to_boolean_object b
   | Ast.Prefix { operator; expr } ->
       let right = eval_expression expr in
       eval_prefix_expression right operator
+  | Ast.Infix { left_expr; operator; right_expr } ->
+      let left, right =
+        (eval_expression left_expr, eval_expression right_expr)
+      in
+      eval_infix_expression (left, operator, right)
   | _ -> Object.Null
 
 let eval_statement = function
@@ -31,20 +56,60 @@ let eval (Ast.Program program) =
 
 let test_eval input = Lexer.lex input |> Parser.parse |> Or_error.map ~f:eval
 
-let%test_unit "eval integer expression" =
-  let cases = [ ("5", 5); ("10", 10); ("-5", -5); ("-10", -10) ] in
+let test_helper cases ~expected_to_result =
   List.iter cases ~f:(fun (inp, expected) ->
       let obj = test_eval inp in
       [%test_result: Object.t Or_error.t] obj
-        ~expect:(Ok (Object.Integer (Int64.of_int expected))))
+        ~expect:(expected_to_result expected))
+
+let%test_unit "eval integer expression" =
+  let cases =
+    [
+      ("5", 5);
+      ("10", 10);
+      ("-5", -5);
+      ("-10", -10);
+      ("5 + 5 + 5 + 5 - 10", 10);
+      ("2 * 2 * 2 * 2 * 2", 32);
+      ("-50 + 100 + -50", 0);
+      ("5 * 2 + 10", 20);
+      ("5 + 2 * 10", 25);
+      ("20 + 2 * -10", 0);
+      ("50 / 2 * 2 + 10", 60);
+      ("2 * (5 + 10)", 30);
+      ("3 * 3 * 3 + 10", 37);
+      ("3 * (3 * 3) + 10", 37);
+      ("(5 + 10 * 2 + 15 / 3) * 2 + -10", 50);
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected ->
+      Ok (Object.Integer (Int64.of_int expected)))
 
 let%test_unit "eval boolean expression" =
-  let inp = {|
-        true
-        false
-    |} in
-  let obj = test_eval inp in
-  [%test_result: Object.t Or_error.t] obj ~expect:(Ok Object.False)
+  let cases =
+    [
+      ("true", Object.True);
+      ("false", False);
+      ("1 < 2", True);
+      ("1 > 2", False);
+      ("1 < 1", False);
+      ("1 > 1", False);
+      ("1 == 1", True);
+      ("1 != 1", False);
+      ("1 == 2", False);
+      ("1 != 2", True);
+      ("true == true", True);
+      ("false == false", True);
+      ("true == false", False);
+      ("true != false", True);
+      ("false != true", True);
+      ("(1 < 2) == true", True);
+      ("(1 < 2) == false", False);
+      ("(1 > 2) == true", False);
+      ("(1 > 2) == false", True);
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected -> Ok expected)
 
 let%test_unit "bang operator" =
   let cases =
@@ -57,6 +122,4 @@ let%test_unit "bang operator" =
       ("!!5", True);
     ]
   in
-  List.iter cases ~f:(fun (inp, expected) ->
-      let obj = test_eval inp in
-      [%test_result: Object.t Or_error.t] obj ~expect:(Ok expected))
+  test_helper cases ~expected_to_result:(fun expected -> Ok expected)
