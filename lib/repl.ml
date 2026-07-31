@@ -16,6 +16,7 @@ let start ic oc =
               | True -> "true"
               | False -> "false"
               | Null -> "NULL"
+              | Err msg -> msg
               | Return _ ->
                   failwith "this shouldn't be returned by the evaluator")
         in

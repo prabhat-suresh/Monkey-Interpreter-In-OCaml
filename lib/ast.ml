@@ -17,6 +17,17 @@ let operator_of_token = function
   | Token.NEq -> NEq
   | _ -> failwith "Not a valid operator"
 
+let string_of_operator = function
+  | Plus -> "+"
+  | Minus -> "-"
+  | Bang -> "!"
+  | Asterisk -> "*"
+  | Slash -> "/"
+  | LT -> "<"
+  | GT -> ">"
+  | Eq -> "=="
+  | NEq -> "!="
+
 type expression =
   | Integer of int
   | Boolean of bool

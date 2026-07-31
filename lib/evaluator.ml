@@ -5,12 +5,16 @@ let eval_bang_operator_expression obj =
 
 let eval_minus_prefix_operator_expression = function
   | Object.Integer n -> Object.Integer Int64.(-n)
-  | _ -> Object.Null
+  | obj -> Err (Printf.sprintf "unknown operator: -%s" (Object.type_of obj))
 
 let eval_prefix_expression right = function
   | Ast.Bang -> eval_bang_operator_expression right
   | Ast.Minus -> eval_minus_prefix_operator_expression right
-  | _ -> Null
+  | op ->
+      Err
+        (Printf.sprintf "unknown operator: %s %s"
+           (Ast.string_of_operator op)
+           (Object.type_of right))
 
 let eval_integer_infix_expression left right = function
   | Ast.Plus -> Object.Integer Int64.(left + right)
@@ -21,45 +25,63 @@ let eval_integer_infix_expression left right = function
   | Ast.GT -> Object.native_bool_to_boolean_object Int64.(left > right)
   | Ast.Eq -> Object.native_bool_to_boolean_object Int64.(left = right)
   | Ast.NEq -> Object.native_bool_to_boolean_object Int64.(left <> right)
-  | _ -> Object.Null
+  | op ->
+      Err
+        (Printf.sprintf "unknown operator: INTEGER %s INTEGER"
+           (Ast.string_of_operator op))
 
-let eval_infix_expression = function
-  | Object.Integer left, op, Object.Integer right ->
-      eval_integer_infix_expression left right op
-  | left, Ast.Eq, right ->
-      Object.native_bool_to_boolean_object (Object.compare left right = 0)
-  | left, Ast.NEq, right ->
-      Object.native_bool_to_boolean_object (Object.compare left right <> 0)
-  | _ -> Object.Null
+let eval_infix_expression ((left, op, right) as tuple) =
+  if String.(Object.type_of left = Object.type_of right) then
+    match tuple with
+    | Object.Integer left, op, Object.Integer right ->
+        eval_integer_infix_expression left right op
+    | _, Ast.Eq, _ ->
+        Object.native_bool_to_boolean_object (Object.compare left right = 0)
+    | _, Ast.NEq, _ ->
+        Object.native_bool_to_boolean_object (Object.compare left right <> 0)
+    | _ ->
+        Err
+          (Printf.sprintf "unknown operator: %s %s %s" (Object.type_of left)
+             (Ast.string_of_operator op)
+             (Object.type_of right))
+  else
+    Err
+      (Printf.sprintf "type mismatch: %s %s %s" (Object.type_of left)
+         (Ast.string_of_operator op)
+         (Object.type_of right))
 
 let rec eval_if_else_expression condition (Ast.Block consequence) alternative =
-  let condition = eval_expression condition in
-  if Object.is_truthy condition then
-    eval_statement_list consequence ~pass_return:true
-  else
-    match alternative with
-    | None -> Object.Null
-    | Some (Ast.Block alternative) ->
-        eval_statement_list alternative ~pass_return:true
+  match eval_expression condition with
+  | Object.Err _ as err -> err
+  | condition -> (
+      if Object.is_truthy condition then
+        eval_statement_list consequence ~pass_return:true
+      else
+        match alternative with
+        | None -> Object.Null
+        | Some (Ast.Block alternative) ->
+            eval_statement_list alternative ~pass_return:true)
 
 and eval_expression = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
   | Ast.Boolean b -> Object.native_bool_to_boolean_object b
-  | Ast.Prefix { operator; expr } ->
-      let right = eval_expression expr in
-      eval_prefix_expression right operator
-  | Ast.Infix { left_expr; operator; right_expr } ->
-      let left, right =
-        (eval_expression left_expr, eval_expression right_expr)
-      in
-      eval_infix_expression (left, operator, right)
+  | Ast.Prefix { operator; expr } -> (
+      match eval_expression expr with
+      | Err _ as right -> right
+      | right -> eval_prefix_expression right operator)
+  | Ast.Infix { left_expr; operator; right_expr } -> (
+      match (eval_expression left_expr, eval_expression right_expr) with
+      | (Err _ as left), _ -> left
+      | _, (Err _ as right) -> right
+      | left, right -> eval_infix_expression (left, operator, right))
   | Ast.IfElseExpression { condition; consequence; alternative } ->
       eval_if_else_expression condition consequence alternative
   | _ -> Object.Null
 
 and eval_statement = function
   | Ast.Expr expr -> eval_expression expr
-  | Return expr -> Return (eval_expression expr)
+  | Return expr -> (
+      match eval_expression expr with Err _ as err -> err | ret -> Return ret)
   | _ -> Object.Null
 
 and eval_statement_list statements ~pass_return =
@@ -67,6 +89,7 @@ and eval_statement_list statements ~pass_return =
     ~f:(fun _ stmt ->
       match eval_statement stmt with
       | Return obj as ret -> Stop (if pass_return then ret else obj)
+      | Err _ as err -> Stop err
       | obj -> Continue obj)
     ~finish:Fn.id
 
@@ -177,3 +200,24 @@ let%test_unit "Return Statements" =
   in
   test_helper cases ~expected_to_result:(fun expected ->
       Ok (Object.Integer (Int64.of_int expected)))
+
+let%test_unit "Error Handling" =
+  let cases =
+    [
+      ("5 + true;", "type mismatch: INTEGER + BOOLEAN");
+      ("5 + true; 5;", "type mismatch: INTEGER + BOOLEAN");
+      ("-true", "unknown operator: -BOOLEAN");
+      ("true + false;", "unknown operator: BOOLEAN + BOOLEAN");
+      ("5; true + false; 5", "unknown operator: BOOLEAN + BOOLEAN");
+      ("if (10 > 1) { true + false; }", "unknown operator: BOOLEAN + BOOLEAN");
+      ( {|if (10 > 1) {
+      if (10 > 1) {
+        return true + false;
+      }
+    return 1;
+  }|},
+        "unknown operator: BOOLEAN + BOOLEAN" );
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected ->
+      Ok (Object.Err expected))
