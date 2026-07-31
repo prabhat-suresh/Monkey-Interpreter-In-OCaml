@@ -15,7 +15,9 @@ let start ic oc =
               | Object.Integer n -> Int64.to_string_hum n
               | True -> "true"
               | False -> "false"
-              | Null -> "NULL")
+              | Null -> "NULL"
+              | Return _ ->
+                  failwith "this shouldn't be returned by the evaluator")
         in
         Out_channel.output_string oc output;
         Out_channel.output_string oc "\n";

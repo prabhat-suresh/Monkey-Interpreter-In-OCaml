@@ -34,11 +34,13 @@ let eval_infix_expression = function
 
 let rec eval_if_else_expression condition (Ast.Block consequence) alternative =
   let condition = eval_expression condition in
-  if Object.is_truthy condition then eval_statement_list consequence
+  if Object.is_truthy condition then
+    eval_statement_list consequence ~pass_return:true
   else
     match alternative with
     | None -> Object.Null
-    | Some (Ast.Block alternative) -> eval_statement_list alternative
+    | Some (Ast.Block alternative) ->
+        eval_statement_list alternative ~pass_return:true
 
 and eval_expression = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
@@ -57,12 +59,18 @@ and eval_expression = function
 
 and eval_statement = function
   | Ast.Expr expr -> eval_expression expr
+  | Return expr -> Return (eval_expression expr)
   | _ -> Object.Null
 
-and eval_statement_list statements =
-  List.fold statements ~init:Object.Null ~f:(fun _ stmt -> eval_statement stmt)
+and eval_statement_list statements ~pass_return =
+  List.fold_until statements ~init:Object.Null
+    ~f:(fun _ stmt ->
+      match eval_statement stmt with
+      | Return obj as ret -> Stop (if pass_return then ret else obj)
+      | obj -> Continue obj)
+    ~finish:Fn.id
 
-let eval (Ast.Program program) = eval_statement_list program
+let eval (Ast.Program program) = eval_statement_list program ~pass_return:false
 let test_eval input = Lexer.lex input |> Parser.parse |> Or_error.map ~f:eval
 
 let test_helper cases ~expected_to_result =
@@ -149,3 +157,23 @@ let%test_unit "If Else Expressions" =
     ]
   in
   test_helper cases ~expected_to_result:(fun expected -> Ok expected)
+
+let%test_unit "Return Statements" =
+  let cases =
+    [
+      ("return 10;", 10);
+      ("return 10; 9;", 10);
+      ("return 2 * 5; 9;", 10);
+      ("9; return 2 * 5; 9;", 10);
+      ( {|if (10 > 1) {
+          if (10 > 1) {
+            return 10;
+          }
+          return 1;
+        }
+        |},
+        10 );
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected ->
+      Ok (Object.Integer (Int64.of_int expected)))
