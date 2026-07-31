@@ -6,3 +6,4 @@ open Base
 type t = Integer of int64 | True | False | Null [@@deriving compare, sexp]
 
 let native_bool_to_boolean_object b = if b then True else False
+let is_truthy = function False | Null -> false | _ -> true

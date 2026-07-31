@@ -1,9 +1,7 @@
 open Base
 
-let eval_bang_operator_expression = function
-  | Object.True -> Object.False
-  | Object.False | Object.Null -> Object.True
-  | _ -> Object.False
+let eval_bang_operator_expression obj =
+  Object.native_bool_to_boolean_object @@ not @@ Object.is_truthy obj
 
 let eval_minus_prefix_operator_expression = function
   | Object.Integer n -> Object.Integer Int64.(-n)
@@ -34,7 +32,15 @@ let eval_infix_expression = function
       Object.native_bool_to_boolean_object (Object.compare left right <> 0)
   | _ -> Object.Null
 
-let rec eval_expression = function
+let rec eval_if_else_expression condition (Ast.Block consequence) alternative =
+  let condition = eval_expression condition in
+  if Object.is_truthy condition then eval_statement_list consequence
+  else
+    match alternative with
+    | None -> Object.Null
+    | Some (Ast.Block alternative) -> eval_statement_list alternative
+
+and eval_expression = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
   | Ast.Boolean b -> Object.native_bool_to_boolean_object b
   | Ast.Prefix { operator; expr } ->
@@ -45,15 +51,18 @@ let rec eval_expression = function
         (eval_expression left_expr, eval_expression right_expr)
       in
       eval_infix_expression (left, operator, right)
+  | Ast.IfElseExpression { condition; consequence; alternative } ->
+      eval_if_else_expression condition consequence alternative
   | _ -> Object.Null
 
-let eval_statement = function
+and eval_statement = function
   | Ast.Expr expr -> eval_expression expr
   | _ -> Object.Null
 
-let eval (Ast.Program program) =
-  List.fold program ~init:Object.Null ~f:(fun _ stmt -> eval_statement stmt)
+and eval_statement_list statements =
+  List.fold statements ~init:Object.Null ~f:(fun _ stmt -> eval_statement stmt)
 
+let eval (Ast.Program program) = eval_statement_list program
 let test_eval input = Lexer.lex input |> Parser.parse |> Or_error.map ~f:eval
 
 let test_helper cases ~expected_to_result =
@@ -120,6 +129,23 @@ let%test_unit "bang operator" =
       ("!!true", True);
       ("!!false", False);
       ("!!5", True);
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected -> Ok expected)
+
+let%test_unit "If Else Expressions" =
+  let ten, twenty =
+    (Object.Integer (Int64.of_int 10), Object.Integer (Int64.of_int 20))
+  in
+  let cases =
+    [
+      ("if (true) { 10 }", ten);
+      ("if (false) { 10 }", Object.Null);
+      ("if (1) { 10 }", ten);
+      ("if (1 < 2) { 10 }", ten);
+      ("if (1 > 2) { 10 }", Object.Null);
+      ("if (1 > 2) { 10 } else { 20 }", twenty);
+      ("if (1 < 2) { 10 } else { 20 }", ten);
     ]
   in
   test_helper cases ~expected_to_result:(fun expected -> Ok expected)
