@@ -14,3 +14,11 @@ let type_of = function
   | Null -> "NULL"
   | Integer _ -> "INTEGER"
   | _ -> failwith "These types shouldn't be operated upon"
+
+module Environment = struct
+  type t' = (string, t) Hashtbl.t
+
+  let new_environment () = Hashtbl.create (module String)
+  let get = Hashtbl.find
+  let set = Hashtbl.set
+end

@@ -1,6 +1,7 @@
 open Base
 
 let start ic oc =
+  let env = Object.Environment.new_environment () in
   let rec loop () =
     Out_channel.output_string oc ">> ";
     Out_channel.flush oc;
@@ -11,7 +12,7 @@ let start ic oc =
           match Parser.parse (Lexer.lex line) with
           | Error e -> Error.to_string_hum e
           | Ok obj -> (
-              match Evaluator.eval obj with
+              match Evaluator.eval env obj with
               | Object.Integer n -> Int64.to_string_hum n
               | True -> "true"
               | False -> "false"

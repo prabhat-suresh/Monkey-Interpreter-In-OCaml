@@ -1,1 +1,1 @@
-val eval : Ast.program -> Object.t
+val eval : Object.Environment.t' -> Ast.program -> Object.t

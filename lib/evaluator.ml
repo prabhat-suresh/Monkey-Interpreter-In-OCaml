@@ -1,4 +1,5 @@
 open Base
+module Env = Object.Environment
 
 let eval_bang_operator_expression obj =
   Object.native_bool_to_boolean_object @@ not @@ Object.is_truthy obj
@@ -50,51 +51,69 @@ let eval_infix_expression ((left, op, right) as tuple) =
          (Ast.string_of_operator op)
          (Object.type_of right))
 
-let rec eval_if_else_expression condition (Ast.Block consequence) alternative =
-  match eval_expression condition with
+let eval_identifier env var =
+  match Env.get env var with
+  | None -> Object.Err (Printf.sprintf "identifier not found: %s" var)
+  | Some obj -> obj
+
+let rec eval_if_else_expression env condition (Ast.Block consequence)
+    alternative =
+  match eval_expression env condition with
   | Object.Err _ as err -> err
   | condition -> (
       if Object.is_truthy condition then
-        eval_statement_list consequence ~pass_return:true
+        eval_statement_list env consequence ~pass_return:true
       else
         match alternative with
         | None -> Object.Null
         | Some (Ast.Block alternative) ->
-            eval_statement_list alternative ~pass_return:true)
+            eval_statement_list env alternative ~pass_return:true)
 
-and eval_expression = function
+and eval_expression env = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
   | Ast.Boolean b -> Object.native_bool_to_boolean_object b
   | Ast.Prefix { operator; expr } -> (
-      match eval_expression expr with
+      match eval_expression env expr with
       | Err _ as right -> right
       | right -> eval_prefix_expression right operator)
   | Ast.Infix { left_expr; operator; right_expr } -> (
-      match (eval_expression left_expr, eval_expression right_expr) with
+      match (eval_expression env left_expr, eval_expression env right_expr) with
       | (Err _ as left), _ -> left
       | _, (Err _ as right) -> right
       | left, right -> eval_infix_expression (left, operator, right))
   | Ast.IfElseExpression { condition; consequence; alternative } ->
-      eval_if_else_expression condition consequence alternative
+      eval_if_else_expression env condition consequence alternative
+  | Ast.Identifier var -> eval_identifier env var
   | _ -> Object.Null
 
-and eval_statement = function
-  | Ast.Expr expr -> eval_expression expr
+and eval_statement env = function
+  | Ast.Expr expr -> eval_expression env expr
   | Return expr -> (
-      match eval_expression expr with Err _ as err -> err | ret -> Return ret)
-  | _ -> Object.Null
+      match eval_expression env expr with
+      | Err _ as err -> err
+      | ret -> Return ret)
+  | Let { name = Ident var; value } -> (
+      match eval_expression env value with
+      | Err _ as err -> err
+      | obj ->
+          Env.set env ~key:var ~data:obj;
+          obj)
 
-and eval_statement_list statements ~pass_return =
+and eval_statement_list env statements ~pass_return =
   List.fold_until statements ~init:Object.Null
     ~f:(fun _ stmt ->
-      match eval_statement stmt with
+      match eval_statement env stmt with
       | Return obj as ret -> Stop (if pass_return then ret else obj)
       | Err _ as err -> Stop err
       | obj -> Continue obj)
     ~finish:Fn.id
 
-let eval (Ast.Program program) = eval_statement_list program ~pass_return:false
-let test_eval input = Lexer.lex input |> Parser.parse |> Or_error.map ~f:eval
+let eval env (Ast.Program program) =
+  eval_statement_list env program ~pass_return:false
+
+let test_eval input =
+  Lexer.lex input |> Parser.parse
+  |> Or_error.map ~f:(eval @@ Env.new_environment ())
 
 let test_helper cases ~expected_to_result =
   List.iter cases ~f:(fun (inp, expected) ->
@@ -211,13 +230,26 @@ let%test_unit "Error Handling" =
       ("5; true + false; 5", "unknown operator: BOOLEAN + BOOLEAN");
       ("if (10 > 1) { true + false; }", "unknown operator: BOOLEAN + BOOLEAN");
       ( {|if (10 > 1) {
-      if (10 > 1) {
-        return true + false;
-      }
-    return 1;
-  }|},
+            if (10 > 1) {
+              return true + false;
+            }
+          return 1;
+        }|},
         "unknown operator: BOOLEAN + BOOLEAN" );
+      ("foobar", "identifier not found: foobar");
     ]
   in
   test_helper cases ~expected_to_result:(fun expected ->
       Ok (Object.Err expected))
+
+let%test_unit "Let Statements" =
+  let cases =
+    [
+      ("let a = 5; a;", 5);
+      ("let a = 5 * 5; a;", 25);
+      ("let a = 5; let b = a; b;", 5);
+      ("let a = 5; let b = a; let c = a + b + 5; c;", 15);
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected ->
+      Ok (Object.Integer (Int64.of_int expected)))
