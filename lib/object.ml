@@ -12,7 +12,10 @@ type t =
   | Err of string
   | Function of { fn : Ast.function_expression; env : env }
 
-and env = ((string, t) Hashtbl.t[@sexp.opaque] [@compare.ignore])
+and env = {
+  store : ((string, t) Hashtbl.t[@sexp.opaque] [@compare.ignore]);
+  outer : env option;
+}
 [@@deriving compare, sexp]
 
 let of_bool b = if b then True else False
@@ -27,7 +30,16 @@ let type_of = function
 module Environment = struct
   type t = env
 
-  let new_environment () = Hashtbl.create (module String)
-  let get = Hashtbl.find
-  let set = Hashtbl.set
+  let new_environment () =
+    { store = Hashtbl.create (module String); outer = None }
+
+  let new_enclosed_environment outer =
+    { store = Hashtbl.create (module String); outer = Some outer }
+
+  let rec get env name =
+    match Hashtbl.find env.store name with
+    | Some _ as obj -> obj
+    | None -> Option.bind env.outer ~f:(fun env -> get env name)
+
+  let set env = Hashtbl.set env.store
 end

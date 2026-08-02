@@ -66,6 +66,33 @@ let rec eval_if_else_expression env condition (Ast.Block consequence)
           ~f:(fun (Ast.Block alternative) ->
             eval_statement_list env alternative ~pass_return:true)
 
+and eval_function_call env func arguments =
+  match eval_expression env func with
+  | Err _ as err -> err
+  | f -> (
+      let arguments, errors =
+        List.partition_map arguments ~f:(fun expr ->
+            match eval_expression env expr with
+            | Err _ as err -> Either.Second err
+            | expr -> Either.first expr)
+      in
+      match errors with
+      | err :: _ -> err
+      | [] -> (
+          match f with
+          | Function { fn = { parameters; body = Block body }; env } -> (
+              let new_env = Env.new_enclosed_environment env in
+              match List.zip parameters arguments with
+              | Unequal_lengths -> Err "incorrect number of arguments"
+              | Ok pair_list -> (
+                  List.iter pair_list ~f:(fun (Ast.Ident var, obj) ->
+                      Env.set new_env ~key:var ~data:obj);
+                  match eval_statement_list new_env body ~pass_return:true with
+                  (* unwrap if it's a return object *)
+                  | Object.Return obj -> obj
+                  | obj -> obj))
+          | _ -> Err (Printf.sprintf "not a function: %s" (Object.type_of f))))
+
 and eval_expression env = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
   | Ast.Boolean b -> Object.of_bool b
@@ -82,7 +109,7 @@ and eval_expression env = function
       eval_if_else_expression env condition consequence alternative
   | Ast.Identifier var -> eval_identifier env var
   | Ast.Fn fn -> Function { fn; env }
-  | _ -> Object.Null
+  | Ast.FnCall { func; arguments } -> eval_function_call env func arguments
 
 and eval_statement env = function
   | Ast.Expr expr -> eval_expression env expr
@@ -279,3 +306,24 @@ let%test_unit "Function Object" =
                 };
               env = tbl;
             }))
+
+let%test_unit "Function Application" =
+  let cases =
+    [
+      ("let identity = fn(x) { x; }; identity(5);", 5);
+      ("let identity = fn(x) { return x; }; identity(5);", 5);
+      ("let double = fn(x) { x * 2; }; double(5);", 10);
+      ("let add = fn(x, y) { x + y; }; add(5, 5);", 10);
+      ("let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));", 20);
+      ("fn(x) { x; }(5)", 5);
+      (* closures: *)
+      ( {|let newAdder = fn(x) {
+          fn(y) { x + y };
+        };
+        let addTwo = newAdder(2);
+        addTwo(2);|},
+        4 );
+    ]
+  in
+  test_helper cases ~expected_to_result:(fun expected ->
+      Ok (Object.Integer (Int64.of_int expected)))
