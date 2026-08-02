@@ -1,6 +1,8 @@
 open Base
 module Env = Object.Environment
 
+let ( let* ) obj f = match obj with Object.Err _ as err -> err | obj -> f obj
+
 let eval_bang_operator_expression obj =
   Object.of_bool @@ not @@ Object.is_truthy obj
 
@@ -31,23 +33,23 @@ let eval_integer_infix_expression left right = function
         (Printf.sprintf "unknown operator: INTEGER %s INTEGER"
            (Ast.string_of_operator op))
 
-let eval_infix_expression ((left, op, right) as tuple) =
-  if String.(Object.type_of left = Object.type_of right) then
-    match tuple with
-    | Object.Integer left, op, Object.Integer right ->
-        eval_integer_infix_expression left right op
-    | _, Ast.Eq, _ -> Object.of_bool (Object.compare left right = 0)
-    | _, Ast.NEq, _ -> Object.of_bool (Object.compare left right <> 0)
-    | _ ->
+let eval_infix_expression left op right =
+  match (left, op, right) with
+  | Object.Integer l, op, Object.Integer r ->
+      eval_integer_infix_expression l r op
+  | _, Ast.Eq, _ -> Object.of_bool (Object.compare left right = 0)
+  | _, Ast.NEq, _ -> Object.of_bool (Object.compare left right <> 0)
+  | _ ->
+      if String.(Object.type_of left = Object.type_of right) then
         Err
           (Printf.sprintf "unknown operator: %s %s %s" (Object.type_of left)
              (Ast.string_of_operator op)
              (Object.type_of right))
-  else
-    Err
-      (Printf.sprintf "type mismatch: %s %s %s" (Object.type_of left)
-         (Ast.string_of_operator op)
-         (Object.type_of right))
+      else
+        Err
+          (Printf.sprintf "type mismatch: %s %s %s" (Object.type_of left)
+             (Ast.string_of_operator op)
+             (Object.type_of right))
 
 let eval_identifier env var =
   match Env.get env var with
@@ -56,55 +58,51 @@ let eval_identifier env var =
 
 let rec eval_if_else_expression env condition (Ast.Block consequence)
     alternative =
-  match eval_expression env condition with
-  | Object.Err _ as err -> err
-  | condition ->
-      if Object.is_truthy condition then
-        eval_statement_list env consequence ~pass_return:true
-      else
-        Option.value_map alternative ~default:Object.Null
-          ~f:(fun (Ast.Block alternative) ->
-            eval_statement_list env alternative ~pass_return:true)
+  let* condition = eval_expression env condition in
+  if Object.is_truthy condition then
+    eval_statement_list env consequence ~pass_return:true
+  else
+    Option.value_map alternative ~default:Object.Null
+      ~f:(fun (Ast.Block alternative) ->
+        eval_statement_list env alternative ~pass_return:true)
+
+and eval_expressions env exprs =
+  List.fold_until exprs ~init:[]
+    ~f:(fun acc expr ->
+      match eval_expression env expr with
+      | Err _ as err -> Stop (Error err)
+      | obj -> Continue (obj :: acc))
+    ~finish:(fun args -> Ok (List.rev args))
 
 and eval_function_call env func arguments =
-  match eval_expression env func with
-  | Err _ as err -> err
-  | f -> (
-      let arguments, errors =
-        List.partition_map arguments ~f:(fun expr ->
-            match eval_expression env expr with
-            | Err _ as err -> Either.Second err
-            | expr -> Either.first expr)
-      in
-      match errors with
-      | err :: _ -> err
-      | [] -> (
-          match f with
-          | Function { fn = { parameters; body = Block body }; env } -> (
-              let new_env = Env.new_enclosed_environment env in
-              match List.zip parameters arguments with
-              | Unequal_lengths -> Err "incorrect number of arguments"
-              | Ok pair_list -> (
-                  List.iter pair_list ~f:(fun (Ast.Ident var, obj) ->
-                      Env.set new_env ~key:var ~data:obj);
-                  match eval_statement_list new_env body ~pass_return:true with
-                  (* unwrap if it's a return object *)
-                  | Object.Return obj -> obj
-                  | obj -> obj))
-          | _ -> Err (Printf.sprintf "not a function: %s" (Object.type_of f))))
+  let* f = eval_expression env func in
+  match eval_expressions env arguments with
+  | Error err -> err
+  | Ok arguments -> (
+      match f with
+      | Function { fn = { parameters; body = Block body }; env } -> (
+          let new_env = Env.new_enclosed_environment env in
+          match List.zip parameters arguments with
+          | Unequal_lengths -> Err "incorrect number of arguments"
+          | Ok pair_list -> (
+              List.iter pair_list ~f:(fun (Ast.Ident var, obj) ->
+                  Env.set new_env ~key:var ~data:obj);
+              match eval_statement_list new_env body ~pass_return:true with
+              (* unwrap if it's a return object *)
+              | Object.Return obj -> obj
+              | obj -> obj))
+      | _ -> Err (Printf.sprintf "not a function: %s" (Object.type_of f)))
 
 and eval_expression env = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
   | Ast.Boolean b -> Object.of_bool b
-  | Ast.Prefix { operator; expr } -> (
-      match eval_expression env expr with
-      | Err _ as right -> right
-      | right -> eval_prefix_expression right operator)
-  | Ast.Infix { left_expr; operator; right_expr } -> (
-      match (eval_expression env left_expr, eval_expression env right_expr) with
-      | (Err _ as left), _ -> left
-      | _, (Err _ as right) -> right
-      | left, right -> eval_infix_expression (left, operator, right))
+  | Ast.Prefix { operator; expr } ->
+      let* right = eval_expression env expr in
+      eval_prefix_expression right operator
+  | Ast.Infix { left_expr; operator; right_expr } ->
+      let* left = eval_expression env left_expr in
+      let* right = eval_expression env right_expr in
+      eval_infix_expression left operator right
   | Ast.IfElseExpression { condition; consequence; alternative } ->
       eval_if_else_expression env condition consequence alternative
   | Ast.Identifier var -> eval_identifier env var
@@ -113,16 +111,13 @@ and eval_expression env = function
 
 and eval_statement env = function
   | Ast.Expr expr -> eval_expression env expr
-  | Return expr -> (
-      match eval_expression env expr with
-      | Err _ as err -> err
-      | ret -> Return ret)
-  | Let { name = Ident var; value } -> (
-      match eval_expression env value with
-      | Err _ as err -> err
-      | obj ->
-          Env.set env ~key:var ~data:obj;
-          obj)
+  | Return expr ->
+      let* ret = eval_expression env expr in
+      Return ret
+  | Let { name = Ident var; value } ->
+      let* obj = eval_expression env value in
+      Env.set env ~key:var ~data:obj;
+      obj
 
 and eval_statement_list env statements ~pass_return =
   List.fold_until statements ~init:Object.Null

@@ -25,7 +25,9 @@ let type_of = function
   | True | False -> "BOOLEAN"
   | Null -> "NULL"
   | Integer _ -> "INTEGER"
-  | _ -> failwith "These types shouldn't be operated upon"
+  | Return _ -> "RETURN"
+  | Err _ -> "ERROR"
+  | Function _ -> "FUNCTION"
 
 module Environment = struct
   type t = env
@@ -38,8 +40,8 @@ module Environment = struct
 
   let rec get env name =
     match Hashtbl.find env.store name with
-    | Some _ as obj -> obj
     | None -> Option.bind env.outer ~f:(fun env -> get env name)
+    | obj -> obj
 
   let set env = Hashtbl.set env.store
 end
