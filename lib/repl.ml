@@ -18,6 +18,7 @@ let start ic oc =
               | False -> "false"
               | Null -> "NULL"
               | Err msg -> msg
+              | Function _ as f -> Object.sexp_of_t f |> Sexp.to_string_hum
               | Return _ ->
                   failwith "this shouldn't be returned by the evaluator")
         in

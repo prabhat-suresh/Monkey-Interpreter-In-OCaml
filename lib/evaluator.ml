@@ -2,7 +2,7 @@ open Base
 module Env = Object.Environment
 
 let eval_bang_operator_expression obj =
-  Object.native_bool_to_boolean_object @@ not @@ Object.is_truthy obj
+  Object.of_bool @@ not @@ Object.is_truthy obj
 
 let eval_minus_prefix_operator_expression = function
   | Object.Integer n -> Object.Integer Int64.(-n)
@@ -22,10 +22,10 @@ let eval_integer_infix_expression left right = function
   | Ast.Minus -> Object.Integer Int64.(left - right)
   | Ast.Asterisk -> Object.Integer Int64.(left * right)
   | Ast.Slash -> Object.Integer Int64.(left / right)
-  | Ast.LT -> Object.native_bool_to_boolean_object Int64.(left < right)
-  | Ast.GT -> Object.native_bool_to_boolean_object Int64.(left > right)
-  | Ast.Eq -> Object.native_bool_to_boolean_object Int64.(left = right)
-  | Ast.NEq -> Object.native_bool_to_boolean_object Int64.(left <> right)
+  | Ast.LT -> Object.of_bool Int64.(left < right)
+  | Ast.GT -> Object.of_bool Int64.(left > right)
+  | Ast.Eq -> Object.of_bool Int64.(left = right)
+  | Ast.NEq -> Object.of_bool Int64.(left <> right)
   | op ->
       Err
         (Printf.sprintf "unknown operator: INTEGER %s INTEGER"
@@ -36,10 +36,8 @@ let eval_infix_expression ((left, op, right) as tuple) =
     match tuple with
     | Object.Integer left, op, Object.Integer right ->
         eval_integer_infix_expression left right op
-    | _, Ast.Eq, _ ->
-        Object.native_bool_to_boolean_object (Object.compare left right = 0)
-    | _, Ast.NEq, _ ->
-        Object.native_bool_to_boolean_object (Object.compare left right <> 0)
+    | _, Ast.Eq, _ -> Object.of_bool (Object.compare left right = 0)
+    | _, Ast.NEq, _ -> Object.of_bool (Object.compare left right <> 0)
     | _ ->
         Err
           (Printf.sprintf "unknown operator: %s %s %s" (Object.type_of left)
@@ -60,18 +58,17 @@ let rec eval_if_else_expression env condition (Ast.Block consequence)
     alternative =
   match eval_expression env condition with
   | Object.Err _ as err -> err
-  | condition -> (
+  | condition ->
       if Object.is_truthy condition then
         eval_statement_list env consequence ~pass_return:true
       else
-        match alternative with
-        | None -> Object.Null
-        | Some (Ast.Block alternative) ->
+        Option.value_map alternative ~default:Object.Null
+          ~f:(fun (Ast.Block alternative) ->
             eval_statement_list env alternative ~pass_return:true)
 
 and eval_expression env = function
   | Ast.Integer n -> Object.Integer (Int64.of_int n)
-  | Ast.Boolean b -> Object.native_bool_to_boolean_object b
+  | Ast.Boolean b -> Object.of_bool b
   | Ast.Prefix { operator; expr } -> (
       match eval_expression env expr with
       | Err _ as right -> right
@@ -84,6 +81,7 @@ and eval_expression env = function
   | Ast.IfElseExpression { condition; consequence; alternative } ->
       eval_if_else_expression env condition consequence alternative
   | Ast.Identifier var -> eval_identifier env var
+  | Ast.Fn fn -> Function { fn; env }
   | _ -> Object.Null
 
 and eval_statement env = function
@@ -253,3 +251,31 @@ let%test_unit "Let Statements" =
   in
   test_helper cases ~expected_to_result:(fun expected ->
       Ok (Object.Integer (Int64.of_int expected)))
+
+let%test_unit "Function Object" =
+  let inp = "fn(x) { x + 2; };" in
+  let obj = test_eval inp in
+  let tbl = Env.new_environment () in
+  Env.set tbl ~key:"x" ~data:(Object.Integer (Int64.of_int 2));
+  [%test_result: Object.t Or_error.t] obj
+    ~expect:
+      (Ok
+         (Function
+            {
+              fn =
+                {
+                  parameters = [ Ident "x" ];
+                  body =
+                    Block
+                      [
+                        Expr
+                          (Infix
+                             {
+                               left_expr = Identifier "x";
+                               operator = Plus;
+                               right_expr = Integer 2;
+                             });
+                      ];
+                };
+              env = tbl;
+            }))

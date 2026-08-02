@@ -43,16 +43,20 @@ type expression =
       consequence : block_statement;
       alternative : block_statement option;
     }
-  | Fn of { parameters : identifier list; body : block_statement }
+  | Fn of function_expression
   | FnCall of { func : expression; arguments : expression list }
-[@@deriving compare, sexp]
 
 and statement =
   | Let of { name : identifier; value : expression }
   | Return of expression
   | Expr of expression
-[@@deriving compare, sexp]
 
-and block_statement = Block of statement list [@@deriving compare, sexp]
+and block_statement = Block of statement list
+
+and function_expression = {
+  parameters : identifier list;
+  body : block_statement;
+}
+[@@deriving compare, sexp]
 
 type program = Program of statement list [@@deriving compare, sexp]
